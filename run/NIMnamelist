@@ -1,0 +1,137 @@
+ &COMPUTETASKnamelist
+   ComputeTasks = 1          ! Compute tasks for NIM (set to 1 for serial)
+/
+ &QUEUEnamelist
+   MaxQueueTime = '00:30:00' ! Run time for the complete job (HH:MM:SS)
+   RestartDir = "G5_K32_PHYSICS_P1_1111"
+! Use this value for zeus:  
+   DataDir = "/scratch1/portfolios/BMC/nim/Thomas.B.Henderson/EstherNIM_MPAS/D041914Kim/data"
+! Use this value for jet:  
+!   DataDir = "/lfs1/projects/fim/hender/EstherNIM_MPAS/D041914Kim/data"
+! Use this value for gaea:  
+!   DataDir = "/lustre/fs/scratch/Thomas.B.Henderson/DATYP3b_byk"
+! Use this value for titan:  
+!   DataDir = "/lustre/atlas1/atm009/proj-shared/DATYP3b_byk"
+! Use this value for tacc:  
+!  DataDir = "/work/02455/tg817513/NIM_MPAS/DATYP3b_byk/APS"
+! Use this value for yellowstone:  
+!  DataDir = "/glade/u/home/hender/NIM_MPAS/DATYP3b_byk/APS"
+! Use this value for m2:  
+!   DataDir = "/work/hender/EstherNIM_MPAS/D041914Kim/data"
+! Use this value for eos:  
+!   DataDir = "/lustre/atlas1/atm009/proj-shared/NIM_MPAS/DATYP3b_byk/APS"
+! Use this value for endeavor:
+!   DataDir = "/lfs/lfs09/Xtbhend/NIM_MPAS/D041914Kim/data"
+/
+ &CNTLnamelist
+   glvl                = 5       ! Grid level
+   gtype               = 2       ! Grid type: Standard recursive (0), Modified recursive (2), Modified great circle (3)
+   SubdivNum           = 2 2 2 2 2 2 2 2 2 2 2 2 ! subdivision number for each recursive refinement  
+   nz                  = 32      ! Number of vertical levels
+   ArchvTimeUnit       = 'ts'    ! ts:timestep; hr:hour dy:day
+   itsbeg              = 1   
+   RestartBegin        = 0       ! Begin restart if .ne.0
+   ForecastLength      = 72       ! Total number of timesteps (100/day),(2400/hr),(2400*60/min), (9600/ts)
+   ArchvIntvl          = 24      ! Archive interval (in ArchvTimeUnit) to do output  (10-day), (240-hr), (240*60-min), (960-ts)
+   minmaxPrintInterval = 24      ! Interval to print out MAXs and MINs
+   PrintIpnDiag        = -1      ! ipn at which to print diagnostics (-1 means no print)
+   physics             = 'mpas' ! GRIMS or GFS or none for no physics
+   GravityWaveDrag     = .true.  ! True means calculate gravity wave drag
+   yyyymmddhhmm = "200707170000" ! Date of the model run
+   pertlim             = 0.      ! Perturbation bound for initial temperature (1.e-7 is good for 32-bit roundoff)
+   powonCPU            = .true.  ! GPU optimziation, see ReadNamelist.F90
+   curve               = 3       ! 0: ij order, 1: Hilbert curve order (only for all-bisection refinement), 2:ij block order, 3: Square Layout
+   NumCacheBlocksPerPE = 1       ! Number of cache blocks per processor. Only applies to ij block order
+   tiles_per_thread    = 1       ! multiplies OMP_NUM_THREADS to give num_tiles for GRIMS
+   dyn_phy_barrier     = .false. ! artificial barrier before and after physics for timing
+/
+!
+! Namelist file for post processing
+!
+ &POSTnamelist
+!
+  numvars       = 8
+  var_list      = "uZZZ vZZZ wZZZ trpZ pZZZ tZZZ qvZZ qwZZ"
+  vert_cord     = 'S'            ! S,Z,P
+  projection    = 'G'            ! 'G/global', 'LP/limited area polar stereographic proj'
+  center_lat    = 45.
+  center_lon    = 270.
+  gptx          = 64
+  gpty          = 64
+  xlen          = 2.5e6
+  ylen          = 2.5e6
+/
+ &PLTVARnamelist
+!
+  xmin           = 0.
+  xmax           = 0.
+  xinc           = 0.
+!
+! pltvar_list    = "uZZZ 3d XYP0025 00"
+! pltvar_list    = "uZZZ 3d XYS0001 00"
+! pltvar_list    = "pZZZ 3d XYS0000 00"
+! pltvar_list    = "wZZZ 3d XYS0000 00"
+!
+! pltvar_list    = "rn2d 2d XYS0000 00"
+!
+! pltvar_list    = "uZZZ 3d LONZ000 00"
+! pltvar_list    = "uZZZ 3d LONP000 00"
+! pltvar_list    = "uZZZ 3d LATP000 00"
+! pltvar_list    = "wZZZ 3d ZONZ000 00"
+! pltvar_list    = "wZZZ 3d ZONP000 00"
+!
+! pltvar_list    = "wZZZ 3d AVGZ000 00"
+! pltvar_list    = "uZZZ 3d AVGZ000 00"
+! pltvar_list    = "uZZZ 3d AVGP000 00"
+!
+! pltvar_list    = "trpZ 3d PROFL_P 00"
+!  pltvar_list    = "trpZ 3d PFILE0Z 00"
+! pltvar_list    = "trpZ 3d PFILE0S 00"
+/
+ &PLTICOSnamelist
+  ginfofile ="/scratch1/portfolios/BMC/nim/DATADIR/APS/D110712/ICSGRD_grid_info_level5.dat"
+  datafile ="out_2D__000000"
+  grid_level = 5
+  var_name = "rc2d"    ! name of the variable
+  nvlvls = 1                ! number of vertical levels of the dataset
+  level = 1                 ! the level of the data to plot
+  proj = 'OR'               ! plot projection
+  latc = 27.344             ! US  
+  lonc = -80.0              ! US
+  extent = 30.0 35.0        ! extent of the domain
+  map_vis = 1               ! plot map
+  cell_vis = 0              ! plot voronoi cell
+  ll_vis = 1                ! plot lat lon lines
+  ipn_label = 0             ! plot ipn index label
+  print_version = 0/        ! create graphic file for printing
+/
+
+! The icosio library allows optional creation of a separate group of MPI 
+! "write tasks" to speed up model output by overlapping disk writes with 
+! computation.  These are specified in TASKnamelist along with switches to 
+! control their behavior and distribution over nodes.  Number of OpenMP 
+! threads and distribution of compute tasks over nodes is also specified in 
+! TASKnamelist.  Please see src/utils/taskinfo.F90 for a full description of 
+! these settings.  
+!
+ &TASKnamelist
+   cpu_cores_per_node = 12
+   max_compute_tasks_per_node = 12
+   omp_threads_per_compute_task = 1
+   num_write_tasks = 0
+   max_write_tasks_per_node = 1
+   root_own_node = .false.
+   icosio_debugmsg_on = .false.
+   max_compute_tasks_per_mic = 0
+   omp_threads_per_mic_mpi_task = 0
+/
+
+&gptlnl
+ maxthreads = 240
+ verbose = .false.
+ utr          = 'nanotime'  ! fastest available underlying timer (Intel processors only)
+! eventlist   = 'PAPI_L1_DCA','PAPI_FP_OPS','GPTL_CI' ! PAPI-based counters (only if PAPI is available)
+! eventlist   = 'PAPI_FP_OPS' ! PAPI-based counters (only if PAPI is available)
+ print_method = 'full_tree' ! print full call tree
+/
+

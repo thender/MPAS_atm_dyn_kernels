@@ -1,0 +1,195 @@
+#!/bin/csh
+#
+#  Usage: jetsub [threads=<omp_threads>] [case=<ideal32level|real32level|real41level>] [queue=<batch|debug>] [partition=<tgpu|sjet|njet>]
+
+set usemsg = "Usage: $0 [threads=<omp_threads>] [case=<ideal32level|real32level|real41level>] [queue=<batch|debug>] [partition=<tgpu|sjet|njet>]"
+
+if ($#argv > 0) then
+  if ($argv[1] == "-h") then
+    echo $usemsg
+    exit 0
+  endif
+endif
+set validqueue = (batch debug)
+set validpartition = (tgpu sjet njet)
+set validcase = (real41level ideal32level real32level)
+
+# Sourcing module_setup will set local variables $arch and $objdir
+# It will also run the appropriate 
+# "module" commands.
+if ( -e ./module_setup) then
+  source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+else
+  echo "File ${cwd}/module_setup does not exist!" && exit 1
+endif
+
+# Set variable defaults.
+set jobname = "wsm6kernel"
+
+# Parse args if present. First initialize to default values
+set queue = $validqueue[1]
+set partition = $validpartition[1]
+set case = $validcase[1]
+set omp_threads_per_compute_task = 1
+# Of course csh does not have getopts...  
+while ($#argv)
+# Throw away what comes after "=" to get the key
+  set key = `echo $1 | sed 's/=.*$//'`
+# Throw away what comes before "=" to get the value
+  set val = `echo $1 | sed 's/.*=//'`
+  if ($key == "" || $val == "") then
+    echo "Cannot parse arg list."
+    echo $usemsg
+    exit 1
+  endif
+  if ($key != "queue" && $key != "partition" && $key != "threads" && $key != "case") then
+    echo "key=value not found or LHS of = must be one of threads|queue|partition|case"
+    exit 1
+  endif
+# Check validity of input. csh lack of functions is beyond ridiculous.
+  if ($key == "queue") then
+    set validopts = ($validqueue)
+    while ($#validopts)
+      if ($val == $validopts[1]) then
+        break
+      endif
+      shift validopts
+    end
+    if ($#validopts == 0) then
+      echo "$val is an unknown queue: Need queue=[one of: $validqueue]"
+      exit 1
+    endif
+  else if ($key == "partition") then
+    set validopts = ($validpartition)
+    while ($#validopts)
+      if ($val == $validopts[1]) then
+        break
+      endif
+      shift validopts
+    end
+    if ($#validopts == 0) then
+      echo "$val is an unknown partition: Need partition=[one of: $validpartition]"
+      exit 1
+    endif
+  else if ($key == "case") then
+    set validopts = ($validcase)
+    while ($#validopts)
+      if ($val == $validopts[1]) then
+        break
+      endif
+      shift validopts
+    end
+    if ($#validopts == 0) then
+      echo "$val is an unknown case: Need case=[one of: $validcase]"
+      exit 1
+    endif
+  else if ($key == "threads") then
+    # Is $val a valid positive non-octal integer?  
+    echo $val | egrep '^[1-9]+[0-9]*$' > /dev/null
+    if ( $status ) then
+      echo "$val is an incorrect number of threads: Need threads=[a positive non-octal integer]"
+      exit 1
+    endif
+    set omp_threads_per_compute_task = $val
+  endif
+  eval "set $key = $val"
+  shift argv
+end
+
+# Account fim-njet is required for any partition other than tgpu
+set account = nim
+if ($partition != tgpu) then
+  set account = fim-njet
+endif
+
+if ($threading == 'yes') then
+  set threadstr = "_${omp_threads_per_compute_task}threads"
+else
+  set threadstr = ""
+endif
+
+set rundir = "RUN_${case}${threadstr}_${$}"
+mkdir $rundir || echo "mkdir $rundir failed" && exit 1
+echo "Made directory: $rundir"
+
+cp cmpwsm6.*sh $rundir
+cp GPTLnamelist $rundir
+cp module_setup $rundir
+cp ${objdir}/bin/* $rundir
+cd $rundir
+
+# link input data set
+set datadir = "${objdir}/../data/${case}"
+ln -fs ${datadir}/wsm6_constants.dat           .
+ln -fs ${datadir}/wsm6_input.dat .
+
+set queue_time = "00:30:00"
+
+# Hack to get exclusive access to each node.  This works around a jet policy 
+# decision to assume that nodes=1:ppn=1 requests shared access which 
+# automatically limits vmem, which is not useful for running a large number 
+# of OpenMP threads on a single node!  
+set ppn = 1
+set total_nodes = 1
+if ($ppn == 1) then
+  if ($total_nodes == 1) then
+    # avoid "nodes=1:ppn=1"
+    set ppn = 2
+  endif
+endif
+
+set pbs_node_request = "nodes=${total_nodes}:ppn=${ppn}"
+set runscript = "runscript"
+
+cat << EOF >! ${runscript}
+#!/bin/csh
+#PBS -A $account
+#PBS -d $PWD
+#PBS -j oe
+#PBS -v $pbs_node_request
+#PBS -l partition=$partition
+#PBS -l walltime=$queue_time
+#PBS -N $jobname
+#PBS -q $queue
+#PBS -W umask=022
+
+echo "${runscript} is starting up in directory `pwd`"
+source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+module list
+set threadstack = "256M"
+
+if ($threading == 'yes') then
+  set cmd = "time env OMP_NUM_THREADS=$omp_threads_per_compute_task OMP_STACKSIZE=\$threadstack ./wsm6kernel"
+else
+  set cmd = "time ./wsm6kernel"
+endif
+
+touch stdout
+echo "running \$cmd" >> stdout
+(\$cmd) >> stdout
+
+if (\$status == 0) then
+  echo wsm6kernel finished
+else
+  echo wsm6kernel failed
+  exit 23
+endif
+exit 0
+EOF
+chmod 755 ./${runscript}
+
+echo "Submitting case '${case}' via '${rundir}/${runscript}' to queue '${queue}', partition '${partition}'"
+
+set SUBCMD="qsub"
+set tries=3
+while ( $tries > 0 )
+  set JOBID=`$SUBCMD ./${runscript}`
+  if ( $? == 0 ) then
+    echo "The job $JOBID has been submitted."
+    exit 0
+  endif
+  echo "Retrying $SUBCMD"
+  @ tries = $tries - 1
+end
+echo "$SUBCMD failed."
+exit 1

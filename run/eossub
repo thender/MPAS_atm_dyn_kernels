@@ -1,0 +1,211 @@
+#!/bin/csh
+#
+#  Usage: eossubnim
+
+#echo "begin $0"
+
+#set echo
+
+# Sourcing module_setup will set local variables $arch, $hw, $par, and $objdir
+# If modules are enabled (e.g. jet, jaguar), it will also run the appropriate 
+# "module" commands.
+if ( -e ./module_setup) then
+  source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+else
+  echo "File ${cwd}/module_setup does not exist!" && exit 1
+endif
+
+# Set variable defaults.
+set jobname = "nim"
+
+if ($hw == 'gpu') then
+  set Q = "batch"
+else
+  set Q = "batch"
+endif
+set Q = "debug"
+
+# Set namelist-based variables.
+set GLVL          = `${objdir}/bin/GetGLVL`         || echo "$GetGLVL failed" && exit 5
+set NZ            = `${objdir}/bin/GetNZ`           || echo "$GetNZ failed" && exit 5
+set PHYSICS       = `${objdir}/bin/GetPhysics`      || echo "$GetPhysics failed" && exit 5
+set compute_tasks = `${objdir}/bin/GetComputeTasks` || echo "$GetComputeTasks failed" && exit 2
+set DATADIR       = `${objdir}/bin/GetPath`         || echo "$GetPath failed" && exit 5
+
+set GRIMSCONDIR=${DATADIR}/GRIMS
+set GFSDATADIR=${DATADIR}/SFCDAT
+set FV3DATADIR=${DATADIR}/FV3DAT
+set ATMDATADIR=${DATADIR}/ATMDAT
+
+# Get Restart Information
+set RESTARTDIR = `${objdir}/bin/GetRestart | grep "RestartDir:" | sed 's/^.*://'` || \
+        echo "Cannot get RestartDir" && exit 5
+set RESTARTBEGIN = `${objdir}/bin/GetRestart | grep "RestartBegin:" | sed 's/^.*://'` || \
+        echo "Cannot get RestartBegin" && exit 5
+if ($RESTARTBEGIN < 0) then
+  echo "namelist setting for RestartBegin not found" && exit 5
+endif
+
+set taskinfoscript = "taskinfo.csh"
+set taskinfofile = "taskinfo.yaml"
+source ./${taskinfoscript} || echo "${taskinfoscript} failed" && exit 1
+
+set rundir = "G${GLVL}_K${NZ}_${PHYSICS}_P${compute_tasks}_${$}"
+mkdir $rundir || echo "mkdir $rundir failed" && exit 1
+echo "Made directory: $rundir"
+
+cp *namelist* $rundir
+mv $taskinfofile $rundir
+cp cmpnim.ksh $rundir
+cp task_info_unit_tests* $rundir
+cp module_setup $rundir
+cp ${objdir}/bin/* $rundir
+cd $rundir
+
+# Execute "task info" unit tests if requested.  This is used only by the test 
+# suite.  
+if ($run_unit_tests == 'yes') then
+  # arguments are yaml input file name, parallelism, output file name
+  # test case specification and expected results live in input file 
+  # "taskinfocases.yaml"
+  # write unit test output to file "stdout"
+  ./task_info_unit_tests $tsttopdir ${objdir}/utils/taskinfocases.yaml $par ${cwd}/stdout || echo "Task Info Unit Tests Failed, see ${cwd}/stdout" && exit 5
+endif
+
+# prepare input data sets for NIM model run
+cp ${objdir}/physics/grims/define.h ./0LOG.grims.define.h
+ln -fs ${objdir}/post/ncarg/pltnim pltnim
+ln -fs ${objdir}/post/ncarg/pltnimone pltnimone
+ln -fs ${objdir}/post/ncarg/pltvar pltvar
+ln -fs ${objdir}/post/ncarg/pltime pltime
+ln -fs ${objdir}/post/plot_icos/plt_icos plt_icos
+if ($RESTARTBEGIN != 0) then
+echo "RestartDir: $RESTARTDIR"
+ln -fs ../${RESTARTDIR}/rst_* .
+foreach fn (rst_*)
+mv $fn old.${fn:r}
+end
+endif
+# Make rundir a full path for runscript
+set rundir = $cwd
+
+set GLVL = `printf "%02d" $GLVL`
+set NZ   = `printf "%03d" $NZ`
+set PTstdFile = STD_G${GLVL}K${NZ}.txt
+set g3dFile   = G3D_G${GLVL}K${NZ}.dat
+set amxFile   = AM_G${GLVL}K${NZ}.dat
+set sstFile   = SST0_G${GLVL}.txt
+set iniFile   = ini_G${GLVL}K${NZ}.dat
+
+#/bin/ln -s $DATADIR/$PTstdFile STD.txt 
+#/bin/ln -s $DATADIR/$g3dFile   g3d.dat
+#/bin/ln -s $DATADIR/$amxFile   amx.dat
+#/bin/ln -s $DATADIR/$sstFile   sst.txt
+#/bin/ln -s $DATADIR/$iniFile   ini.dat
+/bin/ln -s $GFSDATADIR/gfsfc_G${GLVL}.dat  gfsfc.dat
+/bin/ln -s $FV3DATADIR/$PTstdFile STD.txt 
+/bin/ln -s $FV3DATADIR/$g3dFile   g3d.dat
+/bin/ln -s $FV3DATADIR/$amxFile   amx.dat
+/bin/ln -s $FV3DATADIR/$sstFile   sst.txt
+/bin/ln -s $ATMDATADIR/$iniFile   ini.dat
+#zhang
+/bin/ln -s $DATADIR/icos3_info_g${GLVL}.dat icos_grid_info_level.dat
+
+# MPAS read_unit
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/LANDUSE.TBL fort.15
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/RRTMG_SW_DATA RRTMG_SW_DATA
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/RRTMG_LW_DATA RRTMG_LW_DATA
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/VEGPARM.TBL VEGPARM.TBL
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/SOILPARM.TBL SOILPARM.TBL
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/GENPARM.TBL GENPARM.TBL
+
+set queue_time = `./GetQueueTime`
+if ($status != 0) then
+  echo "$GetQueueTime failed"
+  exit 3
+endif
+
+# Create NIM run script. Escaped variables (\$var) need to be evaluated at 
+# run time rather than now.
+
+# Apparently, the value of aprun's -N value may not exceed that of its -n value,
+# so adjust if necessary
+
+test $total_mpi_tasks -lt $mpi_tasks_per_node && set mpi_tasks_per_node=$total_mpi_tasks
+
+set runscript = "runscript"
+
+cat << EOF >! ${runscript}
+#!/bin/csh
+
+#PBS -A atm009
+#PBS -N $jobname
+#PBS -j oe
+#PBS -l walltime=$queue_time
+#PBS -l nodes=${total_nodes}
+#PBS -lgres=atlas1
+##PBS -o $rundir/stdout
+#PBS -q $Q
+
+cd $rundir
+echo "${runscript} is starting up in directory `pwd`"
+source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+# This module cmd will fail on machines without modules
+echo "after module_setup..."
+module list
+#setenv CUDA_PROFILE 1
+#setenv CUDA_PROFILE_CONFIG /autofs/na3_home1/jacquesm/GPU/cuda.profile.config
+
+# turn on CUDA 5 Hyper Q
+if ($par == 'parallel') then
+  if ($hw == 'gpu') then
+#    setenv CRAY_CUDA_PROXY 1
+#    setenv CRAY_PROXY_CLIENT 1
+#    echo "set CRAY_CUDA_PROXY = \$CRAY_CUDA_PROXY to enable CUDA5 Hyper Q"
+#    echo "set CRAY_PROXY_CLIENT = \$CRAY_PROXY_CLIENT to enable CUDA5 Hyper Q"
+  endif
+endif
+
+if ($par == 'serial') then
+  if ($threading == 'yes') then
+    setenv OMP_STACKSIZE 64M
+    setenv KMP_AFFINITY scatter
+    setenv OMP_NUM_THREADS $omp_threads_per_compute_task
+    set cmd = "time aprun -n 1 -d $omp_threads_per_compute_task -cc numa_node ./nim"
+  else
+    set cmd = "time aprun -n 1 ./nim"
+  endif
+else
+  if ($threading == 'yes') then
+    setenv OMP_STACKSIZE 64M
+    setenv KMP_AFFINITY scatter
+    setenv OMP_NUM_THREADS $omp_threads_per_compute_task
+    set cmd = "time aprun -n $total_mpi_tasks -N $mpi_tasks_per_node -d $omp_threads_per_compute_task -cc numa_node ./nim"
+  else
+    set cmd = "time aprun -n $total_mpi_tasks -N $mpi_tasks_per_node ./nim"
+  endif
+endif
+
+touch stdout
+echo "running \$cmd" >> stdout
+(\$cmd) >> stdout
+
+if (\$status == 0) then
+  echo nim finished
+else
+  echo nim failed
+  exit 23
+endif
+exit 0
+EOF
+chmod 755 ./${runscript}
+
+echo "Submitting '${rundir}/${runscript}' to queue '${Q}'"
+echo "See '${rundir}/${taskinfofile}' for task and thread layout details"
+set SUBCMD="qsub"
+set JOBID=`$SUBCMD ./${runscript}`
+test $? -eq 0 || echo "$SUBCMD failed: $JOBID" && exit 1
+set JOBID=`echo $JOBID | tr -d '\n'`
+echo "The job $JOBID has been submitted."
+
+exit 0

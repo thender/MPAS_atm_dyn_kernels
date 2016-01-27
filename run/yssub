@@ -1,0 +1,259 @@
+#!/bin/csh
+#
+#  Usage: zeussubnim [queue=<batch|debug>]
+
+if ($#argv > 0) then
+  if ($argv[1] == "-h") then
+    echo "Usage: $0 [queue=<batch|debug>]"
+    exit 0
+  endif
+endif
+set validqueue = (batch debug)
+
+# Sourcing module_setup will set local variables $arch, $hw, $par, and $objdir
+# If modules are enabled (e.g. jet, jaguar), it will also run the appropriate 
+# "module" commands.
+if ( -e ./module_setup) then
+  source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+else
+  echo "File ${cwd}/module_setup does not exist!" && exit 1
+endif
+
+# Set variable defaults.
+set jobname = "nim"
+
+# Parse args if present. First initialize to default values
+set queue = $validqueue[1]
+while ($#argv)
+# Throw away what comes after "=" to get the key
+  set key = `echo $1 | sed 's/=.*$//'`
+# Throw away what comes before "=" to get the value
+  set val = `echo $1 | sed 's/.*=//'`
+  if ($key == "" || $val == "") then
+    echo "Cannot parse arg list. Usage:$0 [queue=<queue_name>]"
+    exit 1
+  endif
+  if ($key != "queue") then
+    echo "key=value not found or LHS of = must be one of queue"
+    exit 1
+  endif
+
+# Check validity of input. Csh lack of functions is a real liability here
+  if ($key == "queue") then
+    set validopts = ($validqueue)
+    while ($#validopts)
+      if ($val == $validopts[1]) then
+        break
+      endif
+      shift validopts
+    end
+    if ($#validopts == 0) then
+      echo "$val is an unknown queue: Need queue=[one of: $validqueue]"
+      exit 1
+    endif
+  endif
+  eval "set $key = $val"
+  shift argv
+end
+
+if ($hw == 'gpu') then
+  echo "Cannot run gpu build on zeus" && exit 1
+endif
+
+# Set namelist-based variables.
+set GLVL          = `${objdir}/bin/GetGLVL`         || echo "$GetGLVL failed" && exit 5
+set NZ            = `${objdir}/bin/GetNZ`           || echo "$GetNZ failed" && exit 5
+set PHYSICS       = `${objdir}/bin/GetPhysics`      || echo "$GetPhysics failed" && exit 5
+set compute_tasks = `${objdir}/bin/GetComputeTasks` || echo "$GetComputeTasks failed" && exit 2
+set DATADIR       = `${objdir}/bin/GetPath`         || echo "$GetPath failed" && exit 5
+
+set GRIMSCONDIR=${DATADIR}/GRIMS
+set GFSDATADIR=${DATADIR}/SFCDAT
+set FV3DATADIR=${DATADIR}/FV3DAT
+set ATMDATADIR=${DATADIR}/ATMDAT
+
+# Get Restart Information
+set RESTARTDIR = `${objdir}/bin/GetRestart | grep "RestartDir:" | sed 's/^.*://'` || \
+        echo "Cannot get RestartDir" && exit 5
+set RESTARTBEGIN = `${objdir}/bin/GetRestart | grep "RestartBegin:" | sed 's/^.*://'` || \
+        echo "Cannot get RestartBegin" && exit 5
+if ($RESTARTBEGIN < 0) then
+  echo "namelist setting for RestartBegin not found" && exit 5
+endif
+
+set taskinfoscript = "taskinfo.csh"
+set taskinfofile = "taskinfo.yaml"
+source ./${taskinfoscript} || echo "${taskinfoscript} failed" && exit 1
+
+set rundir = "G${GLVL}_K${NZ}_${PHYSICS}_P${compute_tasks}_${$}"
+mkdir $rundir || echo "mkdir $rundir failed" && exit 1
+echo "Made directory: $rundir"
+
+cp *namelist* $rundir
+mv $taskinfofile $rundir
+cp cmpnim.ksh $rundir
+cp task_info_unit_tests* $rundir
+cp module_setup $rundir
+cp ${objdir}/bin/* $rundir
+cd $rundir
+
+# Execute "task info" unit tests if requested.  This is used only by the test 
+# suite.  
+if ($run_unit_tests == 'yes') then
+  # arguments are yaml input file name, parallelism, output file name
+  # test case specification and expected results live in input file 
+  # "taskinfocases.yaml"
+  # write unit test output to file "stdout"
+  ./task_info_unit_tests $tsttopdir ${objdir}/utils/taskinfocases.yaml $par ${cwd}/stdout || echo "Task Info Unit Tests Failed, see ${cwd}/stdout" && exit 5
+endif
+
+# prepare input data sets for NIM model run
+cp ${objdir}/physics/grims/define.h ./0LOG.grims.define.h
+ln -fs ${objdir}/post/ncarg/pltnim pltnim
+ln -fs ${objdir}/post/ncarg/pltnimone pltnimone
+ln -fs ${objdir}/post/ncarg/pltvar pltvar
+ln -fs ${objdir}/post/ncarg/pltime pltime
+ln -fs ${objdir}/post/plot_icos/plt_icos plt_icos
+if ($RESTARTBEGIN != 0) then
+echo "RestartDir: $RESTARTDIR"
+ln -fs ../${RESTARTDIR}/rst_* .
+foreach fn (rst_*)
+mv $fn old.${fn:r}
+end
+endif
+
+
+set GLVL = `printf "%02d" $GLVL`
+set NZ   = `printf "%03d" $NZ`
+set PTstdFile = STD_G${GLVL}K${NZ}.txt
+set g3dFile   = G3D_G${GLVL}K${NZ}.dat
+set amxFile   = AM_G${GLVL}K${NZ}.dat
+set sstFile   = SST0_G${GLVL}.txt
+set iniFile   = ini_G${GLVL}K${NZ}.dat
+
+#/bin/ln -s $DATADIR/$PTstdFile STD.txt 
+#/bin/ln -s $DATADIR/$g3dFile   g3d.dat
+#/bin/ln -s $DATADIR/$amxFile   amx.dat
+#/bin/ln -s $DATADIR/$sstFile   sst.txt
+#/bin/ln -s $DATADIR/$iniFile   ini.dat
+/bin/ln -s $GFSDATADIR/gfsfc_G${GLVL}.dat  gfsfc.dat
+/bin/ln -s $FV3DATADIR/$PTstdFile STD.txt 
+/bin/ln -s $FV3DATADIR/$g3dFile   g3d.dat
+/bin/ln -s $FV3DATADIR/$amxFile   amx.dat
+/bin/ln -s $FV3DATADIR/$sstFile   sst.txt
+/bin/ln -s $ATMDATADIR/$iniFile   ini.dat
+#zhang
+/bin/ln -s $DATADIR/icos3_info_g${GLVL}.dat icos_grid_info_level.dat
+
+# Initial Aerosol
+##/bin/ln -s $GRIMSCONDIR/aerdefb.asc                fort.11
+##/bin/ln -s ./aer_out.asc                           fort.51
+##/bin/ln -s ${objdir}/prep/grimsini/grims2icos/grimsaer .
+##./grimsaer   || exit 8
+##/bin/rm -f fort.11 fort.51 ./grimsaer
+#/bin/ln -s $GRIMSCONDIR/aerosol.G${GLVL}.dat  aerosol.dat
+ 
+# Initial CO2
+#chmod 755 ${objdir}/physics/grims/co2/co2.sh
+#/bin/ln -s ${objdir}/physics/grims/co2/co2.sh co2.sh
+#./co2.sh $GRIMSCONDIR ${objdir}/physics/grims/co2
+#/bin/ln -s co2con                                  fort.15
+ 
+# Initial O3 & CloudTable
+#/bin/ln -s $GRIMSCONDIR/o3prod.clim.asc            fort.28
+#/bin/ln -s $GRIMSCONDIR/o3loss.clim.asc            fort.29
+#/bin/ln -s $GRIMSCONDIR/gcmo3.asc                  fort.48
+#/bin/ln -s $GRIMSCONDIR/tune.t42l18.amip.ewmrg     fort.43
+
+# MPAS read_unit
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/LANDUSE.TBL fort.15
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/RRTMG_SW_DATA RRTMG_SW_DATA
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/RRTMG_LW_DATA RRTMG_LW_DATA
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/VEGPARM.TBL VEGPARM.TBL
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/SOILPARM.TBL SOILPARM.TBL
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/GENPARM.TBL GENPARM.TBL
+
+set queue_time = `./GetQueueTime`
+if ($status != 0) then
+  echo "$GetQueueTime failed"
+  exit 3
+endif
+
+set ppn = ${mpi_tasks_per_node}
+set pbs_node_request = "nodes=${total_nodes}:ppn=${ppn}"
+set runscript = "runscript"
+
+cat << EOF >! ${runscript}
+#!/bin/csh
+#PBS -A nim
+#PBS -d $PWD
+#PBS -j oe
+#PBS -l $pbs_node_request
+#PBS -l walltime=$queue_time
+#PBS -N $jobname
+#PBS -q $queue
+#PBS -W umask=022
+#PBS -r y
+
+source /glade/u/apps/opt/lmod/4.2.1/init/csh
+
+echo "${runscript} is starting up in directory `pwd`"
+source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+# This module cmd will fail on machines without modules
+module list
+#setenv CUDA_PROFILE 1
+#setenv CUDA_PROFILE_CONFIG /whome/govett/GPU/cuda.profile.config
+set threadstack = "256M"
+
+source /ncar/opt/intel/ics-2013-sp1/inspector_xe/inspxe-vars.csh
+
+if ($par == 'serial') then
+  if ($threading == 'yes') then
+    set cmd = "env OMP_NUM_THREADS=$omp_threads_per_compute_task OMP_STACKSIZE=\$threadstack inspxe-cl -collect=ti2 ./nim"
+  else
+    set cmd = "time ./nim"
+  endif
+else
+  if ($threading == 'yes') then
+    set cmd = "env OMP_NUM_THREADS=$omp_threads_per_compute_task OMP_STACKSIZE=\$threadstack time mpiexec -n $total_mpi_tasks ./nim"
+  else
+    set cmd = "time mpiexec -n $total_mpi_tasks ./nim"
+  endif
+endif
+
+touch stdout
+echo "running \$cmd" >> stdout
+(\$cmd) >> stdout
+
+if (\$status == 0) then
+  echo nim finished
+else
+  echo nim failed
+  exit 23
+endif
+exit 0
+EOF
+chmod 755 ./${runscript}
+
+# skipping batch submission for now...  
+echo "Execute './${runscript}' by hand..."
+exit 0
+
+echo "Submitting '${rundir}/${runscript}' to queue '${queue}'"
+echo "See '${rundir}/${taskinfofile}' for task and thread layout details"
+
+set mem=""
+test "$ppn" = "1" && set mem=" -l vmem=3G"
+set SUBCMD="qsub${mem}"
+set tries=3
+while ( $tries > 0 )
+  set JOBID=`$SUBCMD ./${runscript}`
+  if ( $? == 0 ) then
+    echo "The job $JOBID has been submitted."
+    exit 0
+  endif
+  echo "Retrying $SUBCMD"
+  @ tries = $tries - 1
+end
+echo "$SUBCMD failed."
+exit 1

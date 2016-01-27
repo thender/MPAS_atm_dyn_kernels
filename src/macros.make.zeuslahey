@@ -1,0 +1,29 @@
+# For parallel make
+GMAKEMINUSJ = -j8
+
+# Compiler settings. Add build-specific cpp definitions here if needed.  
+BUILD_DEFINES = -DLAHEY
+CPP       = cpp
+CPP_OPTS  = -traditional -P
+CPP_FLAGS += $(CPP_OPTS) $(GPTLINCLUDE) $(DEFINES) $(BUILD_DEFINES)
+LAHEY     = TRUE
+FC        = f90
+FCserial  = lf95
+FCfrontend = lf95
+
+# Fortran flags for various subdirs
+PHYSFLAGS  = --chk -g --trap --trace --info -I ../include
+
+# Flag to target native mode on Xeon-Phi (empty for everyone except xeonphi)
+MICFLAGS =
+
+# Implicit real*8 flag needed in physics
+R8FLAG = --dbl
+
+# GPTL timing library: To shut off entirely, set USE_GPTL = no
+USE_GPTL = no
+ifeq ($(USE_GPTL),yes)
+  GPTLINCLUDE = -I/home/James.Rosinski/gptl-4.1/intel/include
+  GPTLLIB     = -L/home/James.Rosinski/gptl-4.1/intel/lib -lgptl
+endif
+

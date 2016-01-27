@@ -1,0 +1,202 @@
+#!/bin/csh
+#
+#  Usage: endeavorsubnim.host
+
+if ($#argv > 0) then
+  if ($argv[1] == "-h") then
+    echo "Usage: $0"
+    exit 0
+  endif
+endif
+
+# Sourcing module_setup will set local variables $arch, $hw, $par, and $objdir
+# If modules are enabled (e.g. jet, jaguar), it will also run the appropriate 
+# "module" commands.
+if ( -e ./module_setup) then
+  source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+else
+  echo "File ${cwd}/module_setup does not exist!" && exit 1
+endif
+
+# Set variable defaults.
+set jobname = "nim"
+
+set queue=hoelleq
+echo "queue=$queue."
+
+if ($hw == 'gpu') then
+  echo "Cannot run gpu build on endeavor" && exit 1
+endif
+
+# Set namelist-based variables.
+set GLVL          = `${objdir}/bin/GetGLVL`         || echo "$GetGLVL failed" && exit 5
+set NZ            = `${objdir}/bin/GetNZ`           || echo "$GetNZ failed" && exit 5
+set PHYSICS       = `${objdir}/bin/GetPhysics`      || echo "$GetPhysics failed" && exit 5
+set compute_tasks = `${objdir}/bin/GetComputeTasks` || echo "$GetComputeTasks failed" && exit 2
+set DATADIR       = `${objdir}/bin/GetPath`         || echo "$GetPath failed" && exit 5
+
+set GFSDATADIR=${DATADIR}/SFCDAT
+set FV3DATADIR=${DATADIR}/FV3DAT
+set ATMDATADIR=${DATADIR}/ATMDAT
+
+# Get Restart Information
+set RESTARTDIR = `${objdir}/bin/GetRestart | grep "RestartDir:" | sed 's/^.*://'` || \
+        echo "Cannot get RestartDir" && exit 5
+set RESTARTBEGIN = `${objdir}/bin/GetRestart | grep "RestartBegin:" | sed 's/^.*://'` || \
+        echo "Cannot get RestartBegin" && exit 5
+if ($RESTARTBEGIN < 0) then
+  echo "namelist setting for RestartBegin not found" && exit 5
+endif
+
+set taskinfoscript = "taskinfo.csh"
+set taskinfofile = "taskinfo.yaml"
+source ./${taskinfoscript} || echo "${taskinfoscript} failed" && exit 1
+
+set rundir = "G${GLVL}_K${NZ}_${PHYSICS}_P${compute_tasks}_${$}"
+mkdir $rundir || echo "mkdir $rundir failed" && exit 1
+echo "Made directory: $rundir"
+
+cp *namelist* $rundir
+mv $taskinfofile $rundir
+cp cmpnim.ksh $rundir
+cp task_info_unit_tests* $rundir
+cp module_setup $rundir
+cp ${objdir}/bin/* $rundir
+cd $rundir
+
+if ($RESTARTBEGIN != 0) then
+echo "RestartDir: $RESTARTDIR"
+ln -fs ../${RESTARTDIR}/rst_* .
+foreach fn (rst_*)
+mv $fn old.${fn:r}
+end
+endif
+# Make rundir a full path for runscript
+set rundir = $cwd
+
+set GLVL = `printf "%02d" $GLVL`
+set NZ   = `printf "%03d" $NZ`
+set PTstdFile = STD_G${GLVL}K${NZ}.txt
+set g3dFile   = G3D_G${GLVL}K${NZ}.dat
+set amxFile   = AM_G${GLVL}K${NZ}.dat
+set sstFile   = SST0_G${GLVL}.txt
+set iniFile   = ini_G${GLVL}K${NZ}.dat
+
+#/bin/ln -s $DATADIR/$PTstdFile STD.txt 
+#/bin/ln -s $DATADIR/$g3dFile   g3d.dat
+#/bin/ln -s $DATADIR/$amxFile   amx.dat
+#/bin/ln -s $DATADIR/$sstFile   sst.txt
+#/bin/ln -s $DATADIR/$iniFile   ini.dat
+/bin/ln -s $GFSDATADIR/gfsfc_G${GLVL}.dat  gfsfc.dat
+/bin/ln -s $FV3DATADIR/$PTstdFile STD.txt 
+/bin/ln -s $FV3DATADIR/$g3dFile   g3d.dat
+/bin/ln -s $FV3DATADIR/$amxFile   amx.dat
+/bin/ln -s $FV3DATADIR/$sstFile   sst.txt
+/bin/ln -s $ATMDATADIR/$iniFile   ini.dat
+#zhang
+/bin/ln -s $DATADIR/icos3_info_g${GLVL}.dat icos_grid_info_level.dat
+
+# Initial Aerosol
+##/bin/ln -s $GRIMSCONDIR/aerdefb.asc                fort.11
+##/bin/ln -s ./aer_out.asc                           fort.51
+##/bin/ln -s ${objdir}/prep/grimsini/grims2icos/grimsaer .
+##./grimsaer   || exit 8
+##/bin/rm -f fort.11 fort.51 ./grimsaer
+#/bin/ln -s $GRIMSCONDIR/aerosol.G${GLVL}.dat  aerosol.dat
+ 
+# Initial CO2
+#chmod 755 ${objdir}/physics/grims/co2/co2.sh
+#/bin/ln -s ${objdir}/physics/grims/co2/co2.sh co2.sh
+#./co2.sh $GRIMSCONDIR ${objdir}/physics/grims/co2
+#/bin/ln -s co2con                                  fort.15
+ 
+# Initial O3 & CloudTable
+#/bin/ln -s $GRIMSCONDIR/o3prod.clim.asc            fort.28
+#/bin/ln -s $GRIMSCONDIR/o3loss.clim.asc            fort.29
+#/bin/ln -s $GRIMSCONDIR/gcmo3.asc                  fort.48
+#/bin/ln -s $GRIMSCONDIR/tune.t42l18.amip.ewmrg     fort.43
+
+# MPAS read_unit
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/LANDUSE.TBL fort.15
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/RRTMG_SW_DATA RRTMG_SW_DATA
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/RRTMG_LW_DATA RRTMG_LW_DATA
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/VEGPARM.TBL VEGPARM.TBL
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/SOILPARM.TBL SOILPARM.TBL
+/bin/ln -s ${objdir}/physics/mpas/physics_wrf/files/GENPARM.TBL GENPARM.TBL
+
+set queue_time = `./GetQueueTime`
+if ($status != 0) then
+  echo "$GetQueueTime failed"
+  exit 3
+endif
+
+@ host_mpi_tasks = $total_mpi_tasks
+
+cat << EOF >! runscript
+#!/bin/sh
+
+# Change to directory where nim will be run
+cd $rundir
+xeonbin=\${PWD}/nim
+
+# Not sure what this does
+export I_MPI_DAPL_PROVIDER=ofa-v2-mlx4_0-1u 
+
+# Set OMP scheduling metric (default is static)
+export OMP_SCHEDULE=guided
+
+# magic stack size settings
+export OMP_STACKSIZE=64M
+
+# Set the number of host threads per task(Default=1)
+export OMP_NUM_THREADS=$omp_threads_per_compute_task
+
+echo "runscript is starting up in directory ${PWD}"
+# This causes problems on endeavor because module_setup is csh
+#source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+# This module cmd will fail on machines without modules
+#module list
+
+# source sh-specific magic from Ruchira, same as /home/Xtbhend/sourceMe.csh
+. /home/Xtbhend/rsasanka/sourceMe.sh
+
+cfile=./nodeconfig.ivb.txt
+tfile=${rundir}/hosttest.ivb
+rm \$cfile
+touch \$cfile
+
+clines=0
+# Gets rid of some nodes known to be bad
+nodenames=( \`cat \$PBS_NODEFILE | sort | grep -v esg171 | grep -v esg113 | uniq \` )
+
+for n in "\${nodenames[@]}"
+do
+  rm -f \$tfile
+  ssh -o ConnectTimeout=10 \$n "/bin/ls ${rundir}/nim > \$tfile"
+# If rmt node created tfile of non-zero size then we're good
+  if [ -s \$tfile ];
+  then
+    echo "-host \$n -env OMP_NUM_THREADS \$OMP_NUM_THREADS -env KMP_AFFINITY compact -n $mpi_tasks_per_node \$xeonbin" >> \$cfile
+  else
+# Barf if cannot ssh to all allocated nodes.
+    echo "Failure trying to ssh to node=\$n: Giving up" && exit 1
+  fi
+done
+
+# Launch the host-only application
+cmd="mpiexec.hydra -configfile \$cfile"
+
+echo "running \$cmd" > stdout
+echo "OMP_NUM_THREADS=\$OMP_NUM_THREADS" >> stdout
+(\$cmd) >> stdout
+exit 0
+EOF
+chmod 755 ./runscript
+
+echo "Submitting job to queue $queue"
+echo "compute tasks:      $compute_tasks"
+echo "node request:       $total_nodes"
+echo "host nthreads:      $omp_threads_per_compute_task"
+
+bsub -J hostonly_nim -l EIST=2701000 -q $queue -W $queue_time -R "${total_nodes}*{select[ivt] span[ptile=1]}" ./runscript
+exit 0

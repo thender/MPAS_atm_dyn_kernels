@@ -1,0 +1,78 @@
+# For parallel make
+GMAKEMINUSJ = -j8
+
+# Compiler settings. Add build-specific cpp definitions here if needed.  
+BUILD_DEFINES = 
+
+# Add build-specific load flags here if needed
+LDFLAGS   = $(INSTRFLAGS) -openmp
+ifeq ($(BITWISE),yes)
+# Link to Intel's bitwise reproducible math library
+  LDFLAGS += -L. -limf_Intel64
+endif
+
+CPP       = /lib/cpp
+CPP_OPTS  = -traditional -P
+CPP_FLAGS += $(CPP_OPTS) $(GPTLINCLUDE) $(DEFINES) $(BUILD_DEFINES)
+FC         = ifort
+FCserial   = ifort
+FCfrontend = ifort
+FCgfort    = ngfortran
+FCncarg    = ncargf90
+
+# Flag to enable "-fp-model precise" ("makenim" automatically sets this to 
+# yes or no)
+ifeq ($(FPMP),yes)
+  PRECISEFLAG = -fp-model precise
+endif
+
+# Fortran flags for various subdirs. If DEBUG=yes, set for debugging
+# fpe0 will cause the code to abort on overflow, divide-by-zero, or invalid
+# fpe0 does not change the output but adds about 15% to the run time
+
+# Xeon Phi currently does not support -fpe0.
+DEBUG = no
+ifeq ($(DEBUG),yes)
+  PHYSFLAGS  = -g -O0 -ftz -traceback -I ../include -fp-model precise
+else
+  PHYSFLAGS  = -g -O2 -ftz -traceback -I ../include -opt-report-phase=hlo -vec-report6 -xavx -align array64byte $(PRECISEFLAG)
+endif
+
+ifeq ($(BITWISE),yes)
+# Override flag settings with those required by Intel's bitwise reproducible math library
+#JR Turn off -O2 PHYSFLAGS until needed
+  PHYSFLAGS  = -g -O0 -ftz -traceback -I ../include -align array64byte -fp-model strict
+endif
+
+# Whether to enable auto-profiling
+PROFILE = no
+ifeq ($(PROFILE),yes)
+  INSTRFLAGS = -finstrument-functions -rdynamic
+  PHYSFLAGS += $(INSTRFLAGS)
+endif
+
+# Flag to target native mode on Xeon-Phi (empty for everyone except xeonphi)
+MICFLAGS =
+
+# Implicit real*8 flag needed in physics
+R8FLAG = -r8
+
+# Flag to enable OpenMP ("makenim" automatically sets this to yes or no)
+ifeq ($(OPENMP),yes)
+  OMPFLAG = -openmp
+  BUILD_DEFINES += -D_OPENMP
+endif
+
+# Flag to switch to i-on-inside versions of nislfv_rain_plm*() routines
+ifeq ($(IINSIDE),yes)
+  BUILD_DEFINES += -DIINSIDE
+endif
+
+# GPTL timing library: To shut off entirely, set USE_GPTL = no
+USE_GPTL = yes
+ifeq ($(USE_GPTL),yes)
+  GPTL = /home1/02455/tg817513/gptl-v5.3.2/xeon_nompi
+  GPTLINCLUDE = -I$(GPTL)/include
+  GPTLLIB     = -L$(GPTL)/lib -lgptl
+endif
+

@@ -1,0 +1,206 @@
+#!/bin/csh
+#
+#  Usage: endeavorsubnim.mic
+ 
+if ($#argv > 0) then
+  if ($argv[1] == "-h") then
+    echo "Usage: $0"
+    exit 0
+  endif
+endif
+ 
+# Sourcing module_setup will set local variables $arch, $hw, $par, and $objdir
+# If modules are enabled (e.g. jet, jaguar), it will also run the appropriate
+# "module" commands.
+if ( -e ./module_setup) then
+  source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+else
+  echo "File ${cwd}/module_setup does not exist!" && exit 1
+endif
+ 
+# Set variable defaults.
+set jobname = "nim"
+ 
+set queue=hoelleq
+echo "queue=$queue."
+ 
+if ($hw == 'gpu') then
+  echo "Cannot run gpu build on endeavor" && exit 1
+endif
+ 
+# Set namelist-based variables.
+set GLVL          = `${objdir}/bin/GetGLVL`         || echo "$GetGLVL failed" && exit 5
+set NZ            = `${objdir}/bin/GetNZ`           || echo "$GetNZ failed" && exit 5
+set PHYSICS       = `${objdir}/bin/GetPhysics`      || echo "$GetPhysics failed" && exit 5
+set compute_tasks = `${objdir}/bin/GetComputeTasks` || echo "$GetComputeTasks failed" && exit 2
+set DATADIR       = `${objdir}/bin/GetPath`         || echo "$GetPath failed" && exit 5
+ 
+set GFSDATADIR=${DATADIR}/SFCDAT
+set FV3DATADIR=${DATADIR}/FV3DAT
+set ATMDATADIR=${DATADIR}/ATMDAT
+ 
+# Get Restart Information
+set RESTARTDIR = `${objdir}/bin/GetRestart | grep "RestartDir:" | sed 's/^.*://'` || \
+        echo "Cannot get RestartDir" && exit 5
+set RESTARTBEGIN = `${objdir}/bin/GetRestart | grep "RestartBegin:" | sed 's/^.*://'` || \
+        echo "Cannot get RestartBegin" && exit 5
+if ($RESTARTBEGIN < 0) then
+  echo "namelist setting for RestartBegin not found" && exit 5
+endif
+ 
+set taskinfoscript = "taskinfo.csh"
+set taskinfofile = "taskinfo.yaml"
+source ./${taskinfoscript} || echo "${taskinfoscript} failed" && exit 1
+ 
+set rundir = "G${GLVL}_K${NZ}_${PHYSICS}_P${compute_tasks}_${$}"
+mkdir $rundir || echo "mkdir $rundir failed" && exit 1
+echo "Made directory: $rundir"
+ 
+cp *namelist* $rundir
+mv $taskinfofile $rundir
+cp task_info_unit_tests* $rundir
+cp module_setup $rundir
+cp ${objdir}/bin/* $rundir
+cd $rundir
+ 
+# prepare input data sets for NIM model run
+if ($RESTARTBEGIN != 0) then
+echo "RestartDir: $RESTARTDIR"
+ln -fs ../${RESTARTDIR}/rst_* .
+foreach fn (rst_*)
+mv $fn old.${fn:r}
+end
+endif
+# Make rundir a full path for runscript
+set rundir = $cwd
+ 
+set GLVL = `printf "%02d" $GLVL`
+set NZ   = `printf "%03d" $NZ`
+set PTstdFile = STD_G${GLVL}K${NZ}.txt
+set g3dFile   = G3D_G${GLVL}K${NZ}.dat
+set amxFile   = AM_G${GLVL}K${NZ}.dat
+set sstFile   = SST0_G${GLVL}.txt
+set iniFile   = ini_G${GLVL}K${NZ}.dat
+ 
+#/bin/ln -s $DATADIR/$PTstdFile STD.txt
+#/bin/ln -s $DATADIR/$g3dFile   g3d.dat
+#/bin/ln -s $DATADIR/$amxFile   amx.dat
+#/bin/ln -s $DATADIR/$sstFile   sst.txt
+#/bin/ln -s $DATADIR/$iniFile   ini.dat
+/bin/ln -s $GFSDATADIR/gfsfc_G${GLVL}.dat  gfsfc.dat
+/bin/ln -s $FV3DATADIR/$PTstdFile STD.txt
+/bin/ln -s $FV3DATADIR/$g3dFile   g3d.dat
+/bin/ln -s $FV3DATADIR/$amxFile   amx.dat
+/bin/ln -s $FV3DATADIR/$sstFile   sst.txt
+/bin/ln -s $ATMDATADIR/$iniFile   ini.dat
+ 
+set queue_time = `./GetQueueTime`
+if ($status != 0) then
+  echo "$GetQueueTime failed"
+  exit 3
+endif
+ 
+@ max_compute_tasks_per_host = $max_compute_tasks_per_node - $max_compute_tasks_per_mic
+
+ 
+cat << EOF >! kncScript
+echo "Running knc script"
+source /opt/intel/impi/4.1.1.036/mic/bin/mpivars.sh
+export PATH=/opt/intel/impi/4.1.1.036/mic/bin:\$PATH
+source /opt/intel/compiler/latest/mkl/bin/mklvars.sh mic
+export LD_LIBRARY_PATH=/opt/intel/compiler/latest/mkl/lib/mic:\$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/opt/intel/compiler/latest/lib/mic:\$LD_LIBRARY_PATH
+export OMP_NUM_THREADS=$omp_threads_per_mic_mpi_task
+export KMP_AFFINITY="granularity=fine,compact"
+../../src_endeavorxeonphi_cpu_parallel_ompyes_bitwise${bitwise}/bin/nim
+EOF
+chmod 755 ./kncScript
+ 
+
+cat << EOF >! runscript
+#!/bin/sh
+
+# Actual number of nodes to be used for this run
+#
+actnodes=\$1
+
+# Change to directory where nim will be run
+cd $rundir
+ 
+kncbin=\${PWD}/kncScript
+ 
+mpdboot
+ 
+# Not sure what this does
+export I_MPI_DAPL_PROVIDER=ofa-v2-mlx4_0-1u
+export I_MPI_MIC=enable
+ 
+# Set OMP scheduling metric (default is static)
+export OMP_SCHEDULE=guided
+export MIC_OMP_SCHEDULE=guided
+ 
+# magic stack size settings
+export OMP_STACKSIZE=64M
+ 
+# Set the number of host threads per task(Default=1)
+export OMP_NUM_THREADS=$omp_threads_per_compute_task
+ 
+echo "runscript is starting up in directory ${PWD}"
+# This causes problems on endeavor
+#source ./module_setup || echo "Failure from source ./module_setup" && exit 1
+# This module cmd will fail on machines without modules
+#module list
+ 
+cfile=./nodeconfig.sym.txt
+tfile=${rundir}/hosttest.sym
+rm \$cfile
+touch \$cfile
+ 
+clines=0
+# Gets rid of some nodes known to be bad
+nodenames=( \`cat \$PBS_NODEFILE | sort | grep -v esg171 | grep -v esg113 | uniq \` )
+ 
+for n in "\${nodenames[@]}"
+do
+  rm -f \$tfile
+  ssh -o ConnectTimeout=10 \$n "/bin/ls ${rundir}/kncScript > \$tfile"
+# If rmt node created tfile of non-zero size then we're good
+  if [ -s \$tfile ];
+  then
+    echo "-host \${n}-mic1 -env OMP_NUM_THREADS $omp_threads_per_compute_task -env KMP_AFFINITY compact -n $max_compute_tasks_per_mic \$kncbin" >> \$cfile
+    clines=\$((\$clines+1))
+  fi
+
+  if [ "\$clines" -ge \$actnodes ];
+  then
+    break
+  fi
+done
+
+set -e
+echo "Produced \$clines nodes in config file"
+ 
+# Launch the KNC-only application
+cmd="mpiexec.hydra -configfile \$cfile > outCluster.miconly"
+
+echo "running \$cmd" > stdout
+echo "OMP_NUM_THREADS=\$OMP_NUM_THREADS" >> stdout
+(\$cmd) >> stdout
+exit 0
+EOF
+chmod 755 ./runscript
+ 
+# Need to request a few extra nodes in case bad ones are found
+@ extra = $total_nodes / 20
+@ nodes_to_ask_for = $total_nodes + $extra
+
+echo "Submitting job to queue $queue"
+echo "compute tasks:      $compute_tasks"
+echo "node request:       $total_nodes"
+echo "Extra nodes:        $extra"
+echo "host nthreads:      $omp_threads_per_compute_task"
+
+bsub -J nim.mic -l EIST=2701000 -l MIC_ULIMIT_STACKSIZE=365536 -l MIC_TIMINGDEVICE=tsc -q $queue -W $queue_time -R "${total_nodes}*{select[kncB1x2] span[ptile=1]}" "./runscript $nodes_to_ask_for"
+#echo "time: ${queue_time}"
+ 
+exit 0
