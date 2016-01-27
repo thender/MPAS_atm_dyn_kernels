@@ -4,13 +4,13 @@ SHELL = /bin/sh
 FFLAGS = $(PHYSFLAGS) $(R8FLAG) $(OMPFLAG) $(MICFLAGS)
 LIBS = $(GPTLLIB)
 
-BASENAME = wsm6_kernel
+BASENAME = atm_compute_dyn_tend_work_kernel
 SRC = $(BASENAME).F90
 OBJ = $(BASENAME).o
 
 .SUFFIXES : .o .f90 .F90
 
-$(WSM6EXE) : $(SRC)
+$(KERNELEXE) : $(SRC)
 	$(CPP) $(CPP_FLAGS) $(SRC) > $(BASENAME).f90
 	$(CHUNKCMD) $(BASENAME).f90 > $(BASENAME)_chunk.f90
 	$(LITERALKCMD) $(BASENAME)_chunk.f90 > $(BASENAME)_kcmd.f90

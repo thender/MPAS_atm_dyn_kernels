@@ -1,6 +1,6 @@
 #!/bin/csh
 
-# This script builds the WSM6 stand-alone kernel.
+# This script builds an MPAS stand-alone kernel.
 #
 ### Apologies for use of csh, this was inherited. ###
 #
@@ -31,8 +31,8 @@
 # cause(s) (use of real data sets from MPAS instread of idealized data sets 
 # from NIM, etc. etc.).  
 #
-# "makewsm6 clean" removes any src_* directories (created by earlier 
-# invocations of "makewsm6") in the parent directory.  It is not supported in 
+# "makekernel clean" removes any src_* directories (created by earlier 
+# invocations of "makekernel") in the parent directory.  It is not supported in 
 # combination with a "buildroot" argument. 
 
 set validarch = (intel lahey pgi zeusintel zeuslahey sjetintel titanintel titancray tacc taccxeonphi ysintel m1intel m1xeonphi m2intel m2xeonphi eosintel endeavorintel endeavorhswep endeavorxeonphi)
@@ -58,13 +58,13 @@ set usemsg_fpmp = "fpmp=[one of: $validfpmp]"
 set usemsg_iinside = "iinside=[one of: $validiinside]"
 set usemsg_buildroot = "buildroot=[dir_to_build (default is $cwd:h)]"
 
-# makewsm6 must be run from the src directory
+# makekernel must be run from the src directory
 if ($cwd:t != src || ! -d kernel || ! -d tools) then
   echo "${thisscript}: MUST be run from NIM src directory! $srcdir looks suspicious"
   exit 1
 endif
 
-# Special cases of "makewsm6 clean" and "makewsm6 -*help"
+# Special cases of "makekernel clean" and "makekernel -*help"
 if ($#argv == 1) then
   if ($argv[1] == "clean") then
     set cmd = 'rm -rf ../src_*'
@@ -308,13 +308,13 @@ echo "Using buildroot = ${buildroot}. 'make' will be run in ${objdir}"
 echo ""
 
 # Create a script which can build NIM directly from the build directory
-cat >! ${objdir}/makewsm6_fromobj <<EOF
+cat >! ${objdir}/makekernel_fromobj <<EOF
 #!/bin/csh
 source ./module_setup || echo "Failure to source ./module_setup"
 make
 exit 0
 EOF
-chmod 755 ${objdir}/makewsm6_fromobj
+chmod 755 ${objdir}/makekernel_fromobj
 
 if ( ! -d $rundir) then
   mkdir $rundir || echo "Failure from mkdir $rundir" && exit 1
@@ -333,8 +333,8 @@ echo "Issuing cmd: $cmd ..."
 time $cmd || echo "rsync 1 failure" && exit 1
 echo "Done"
 
-# Don't want "makewsm6" to exist in objdir--use makewsm6_fromobj instead
-\rm -f ${objdir}/makewsm6
+# Don't want "makekernel" to exist in objdir--use makekernel_fromobj instead
+\rm -f ${objdir}/makekernel
 
 set cmd = "rsync -au run/ $rundir"
 echo "Issuing cmd: $cmd ..."

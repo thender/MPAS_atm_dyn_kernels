@@ -12,4 +12,4 @@ endif
 
 FCX    = $(FCserial)
 
-WSM6EXE = $(BINDIR)/wsm6kernel
+KERNELEXE = $(BINDIR)/atm_compute_dyn_tend_work_kernel
